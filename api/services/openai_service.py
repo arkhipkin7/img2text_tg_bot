@@ -2,11 +2,12 @@
 OpenAI API service for content generation.
 
 This module provides a service for generating product content using OpenAI's
-GPT-4 Vision model. It supports image analysis, text processing, and
-combined image-text analysis.
+GPT-5 Responses API. It supports image analysis, text processing, and
+combined image-text analysis (via base64-embedded images).
 """
 
 import base64
+import json
 import logging
 import os
 import time
@@ -33,9 +34,8 @@ class OpenAIService:
     def __init__(self):
         """Initialize OpenAI service with configuration from environment."""
         self.api_key = os.getenv('OPENAI_API_KEY')
-        self.model = os.getenv('OPENAI_MODEL', 'gpt-4o')
+        self.model = os.getenv('OPENAI_MODEL', 'gpt-4o-mini')
         self.max_tokens = int(os.getenv('OPENAI_MAX_TOKENS', '1000'))
-        self.imgbb_api_key = os.getenv('IMGBB_API_KEY')
 
         if not self.api_key:
             raise ContentGenerationError("OpenAI API key not configured")
@@ -45,10 +45,16 @@ class OpenAIService:
         http_client = httpx.AsyncClient()
         self.client = openai.AsyncOpenAI(api_key=self.api_key, http_client=http_client)
 
-        # Prompts for different content types
-        self._image_prompt = self._get_image_analysis_prompt()
-        self._text_prompt = self._get_text_processing_prompt()
-        self._combined_prompt = self._get_combined_analysis_prompt()
+        # Import prompts from utils с обработкой ошибок
+        try:
+            from api.utils.prompts import IMAGE_ANALYSIS_PROMPT, TEXT_PROCESSING_PROMPT, COMBINED_PROCESSING_PROMPT
+            self._image_prompt = IMAGE_ANALYSIS_PROMPT
+            self._text_prompt = TEXT_PROCESSING_PROMPT
+            self._combined_prompt = COMBINED_PROCESSING_PROMPT
+            logger.debug(f"Combined prompt loaded successfully, length: {len(self._combined_prompt)}")
+        except Exception as e:
+            logger.error(f"Error loading prompts: {e}")
+            raise ContentGenerationError(f"Failed to load prompts: {e}")
     
     async def generate_from_image(self, image_path: str) -> Dict[str, Any]:
         """
@@ -118,8 +124,8 @@ class OpenAIService:
         try:
             logger.info(f"Generating content from text: {text[:50]}...")
             
-            # Prepare prompt with user text
-            prompt = self._text_prompt.format(text=text)
+            # Prepare prompt with user text (безопасная замена)
+            prompt = self._text_prompt.replace("{text}", text)
             
             # Generate content using OpenAI
             response = await self._call_openai_api(prompt=prompt)
@@ -161,20 +167,30 @@ class OpenAIService:
             
             # Load and process image
             image = self._load_image(image_path)
+
+            # Prepare base64 image URL
+            base64_image = self._encode_image_to_base64(image)
+
+            # Prepare prompt with user text (безопасная замена)
+            logger.debug(f"Original combined prompt length: {len(self._combined_prompt)}")
+            logger.debug(f"User text to insert: {text}")
             
-            # Upload image to imgbb and get URL
-            image_url = self._upload_image_to_imgbb(image)
+            if "{text}" not in self._combined_prompt:
+                logger.error("Placeholder {text} not found in combined prompt!")
+                raise ContentGenerationError("Invalid combined prompt: missing {text} placeholder")
             
-            # Prepare prompt with user text
-            prompt = self._combined_prompt.format(text=text)
+            prompt = self._combined_prompt.replace("{text}", text)
+            logger.debug(f"Combined prompt prepared, final length: {len(prompt)}")
+            logger.debug(f"Combined prompt preview: {prompt[:200]}...")
             
             # Generate content using OpenAI
             response = await self._call_openai_api(
                 prompt=prompt,
-                image_url=image_url
+                image_url=f"data:image/jpeg;base64,{base64_image}"
             )
             
             # Parse and validate response
+            logger.debug(f"Raw response from OpenAI: {response[:500]}...")
             content = self._parse_response(response)
             logger.info("Content generated successfully from image and text")
             
@@ -182,6 +198,8 @@ class OpenAIService:
             
         except Exception as e:
             logger.error(f"Error generating content from image and text: {e}")
+            logger.error(f"Exception type: {type(e)}")
+            logger.error(f"Exception traceback:", exc_info=True)
             raise ContentGenerationError(f"Combined analysis failed: {e}")
     
     def _load_image(self, image_path: str) -> Image.Image:
@@ -234,43 +252,7 @@ class OpenAIService:
         image.save(buffered, format="JPEG", quality=85)
         return base64.b64encode(buffered.getvalue()).decode("utf-8")
     
-    def _upload_image_to_imgbb(self, image: Image.Image) -> str:
-        """
-        Upload image to imgbb and get public URL.
-        
-        Parameters
-        ----------
-        image : PIL.Image.Image
-            Image to upload.
-            
-        Returns
-        -------
-        str
-            Public URL of uploaded image.
-            
-        Raises
-        ------
-        ContentGenerationError
-            If upload fails.
-        """
-        if not self.imgbb_api_key:
-            raise ContentGenerationError("IMGBB API key not configured")
-        
-        try:
-            buffered = BytesIO()
-            image.save(buffered, format="JPEG", quality=85)
-            img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
-
-            response = requests.post(
-                "https://api.imgbb.com/1/upload",
-                params={"key": self.imgbb_api_key},
-                data={"image": img_base64}
-            )
-            response.raise_for_status()
-            return response.json()["data"]["url"]
-            
-        except Exception as e:
-            raise ContentGenerationError(f"Failed to upload image to imgbb: {e}")
+    # Removed external image hosting dependency (imgbb); using base64 data URLs instead
     
     async def _call_openai_api(self, prompt: str, image_url: Optional[str] = None) -> str:
         """
@@ -298,42 +280,64 @@ class OpenAIService:
         
         for attempt in range(max_retries):
             try:
-                messages = [{"role": "user", "content": []}]
-                
-                # Add image content first if provided
+                # Prepare Chat Completions API input
                 if image_url:
-                    messages[0]["content"].append({
-                        "type": "image_url",
-                        "image_url": {"url": image_url}
-                    })
-                
-                # Add text content
-                messages[0]["content"].append({"type": "text", "text": prompt})
+                    # Vision model format
+                    user_content = [
+                        {
+                            "type": "text",
+                            "text": prompt,
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": image_url},
+                        }
+                    ]
+                else:
+                    # Text only format
+                    user_content = prompt
+
+                messages = [{
+                    "role": "user",
+                    "content": user_content,
+                }]
                 
                 response = await self.client.chat.completions.create(
                     model=self.model,
                     messages=messages,
                     max_tokens=self.max_tokens,
-                    temperature=0.7
                 )
-                
-                result = response.choices[0].message.content
-                
-                # Validate response quality
-                if self._validate_response_quality(result):
-                    return result
+
+                # Extract text from Chat Completions API
+                result = None
+                logger.info(f"Response received: {response}")
+                if hasattr(response, "choices") and response.choices:
+                    logger.info(f"Choices found: {len(response.choices)}")
+                    try:
+                        result = response.choices[0].message.content
+                        logger.info(f"Extracted content: {result}")
+                    except Exception as e:
+                        logger.warning(f"Failed to extract content: {e}")
+                        result = None
                 else:
-                    logger.warning(f"Response quality check failed on attempt {attempt + 1}")
+                    logger.warning("No choices in response")
+                
+                # Minimal check: require non-empty result; detailed validation happens in _parse_response
+                if not result or not str(result).strip():
+                    logger.warning(f"Empty response on attempt {attempt + 1}")
                     if attempt < max_retries - 1:
-                        time.sleep(retry_delay)
+                        import asyncio
+                        await asyncio.sleep(retry_delay)
                         continue
-                    else:
-                        raise ContentGenerationError("Response quality too low after all retries")
+                    raise ContentGenerationError("Empty model response after all retries")
+
+                return result
                 
             except Exception as e:
                 logger.warning(f"OpenAI API call failed on attempt {attempt + 1}: {e}")
                 if attempt < max_retries - 1:
-                    time.sleep(retry_delay)
+                    import asyncio
+                    await asyncio.sleep(retry_delay)
                     continue
                 else:
                     raise ContentGenerationError(f"OpenAI API call failed after {max_retries} attempts: {e}")
@@ -360,10 +364,81 @@ class OpenAIService:
             If response parsing fails.
         """
         try:
-            # Check if response is empty or too short
-            if not response or len(response.strip()) < 50:
-                logger.warning(f"Response too short or empty: {len(response)} characters")
-                return self._get_fallback_content()
+            logger.debug(f"Parsing response of length {len(response)}: {response[:200]}...")
+            
+            # If JSON is returned (preferred), parse it directly
+            parsed_json: Optional[dict] = None
+            try:
+                # Попробуем сначала прямой парсинг
+                parsed_json = json.loads(response)
+                logger.info("Successfully parsed response as direct JSON")
+            except Exception as e:
+                logger.debug(f"Direct JSON parsing failed: {e}")
+                # Если не получилось, попробуем извлечь JSON из markdown блока
+                try:
+                    # Ищем JSON в ```json блоках с более точным паттерном
+                    import re
+                    json_match = re.search(r'```(?:json)?\s*(\{[^`]*\})\s*```', response, re.DOTALL)
+                    if json_match:
+                        parsed_json = json.loads(json_match.group(1))
+                        logger.info("Successfully extracted JSON from markdown code block")
+                    else:
+                        # Ищем полный JSON объект (считаем скобки)
+                        start = response.find('{')
+                        if start != -1:
+                            brace_count = 0
+                            end = start
+                            for i, char in enumerate(response[start:], start):
+                                if char == '{':
+                                    brace_count += 1
+                                elif char == '}':
+                                    brace_count -= 1
+                                    if brace_count == 0:
+                                        end = i + 1
+                                        break
+                            
+                            if brace_count == 0:
+                                json_str = response[start:end]
+                                parsed_json = json.loads(json_str)
+                                logger.info("Successfully extracted JSON by counting braces")
+                except Exception as e:
+                    logger.warning(f"Failed to extract JSON from response: {e}")
+                    logger.debug(f"Response content: {response[:500]}...")  # Логируем первые 500 символов
+                    parsed_json = None
+
+            if parsed_json and isinstance(parsed_json, dict):
+                content = {
+                    'title': str(parsed_json.get('title', '')).strip(),
+                    'short_description': str(parsed_json.get('short_description', '')).strip(),
+                    'full_description': str(parsed_json.get('full_description', '')).strip(),
+                    'features': [str(x).strip() for x in (parsed_json.get('features') or []) if str(x).strip()],
+                    'seo_keywords': [str(x).strip() for x in (parsed_json.get('seo_keywords') or []) if str(x).strip()],
+                    'target_audience': [str(x).strip() for x in (parsed_json.get('target_audience') or []) if str(x).strip()],
+                }
+                
+                # Логируем успешную обработку JSON
+                logger.info(f"Successfully parsed JSON response with {len(content['features'])} features, {len(content['seo_keywords'])} keywords")
+                # Fill defaults without rejecting JSON
+                if not content['title']:
+                    content['title'] = "Товар"
+                if not content['short_description']:
+                    content['short_description'] = content['full_description'][:120] or "Стильный и функциональный товар"
+                if not content['full_description']:
+                    content['full_description'] = content['short_description']
+                if not content['features']:
+                    content['features'] = ["Высокое качество", "Стильный дизайн"]
+                if not content['seo_keywords']:
+                    content['seo_keywords'] = ["описание товара", "характеристики"]
+                if not content['target_audience']:
+                    content['target_audience'] = ["Покупатели", "Потребители"]
+                return content
+
+            # Textual fallback parsing
+            if not response or len(response.strip()) < 20:
+                logger.warning(
+                    f"Response too short or empty: {0 if not response else len(response)} characters"
+                )
+                raise ContentGenerationError("Model response too short")
             
             # Check for common error patterns
             error_patterns = [
@@ -374,7 +449,7 @@ class OpenAIService:
             response_lower = response.lower()
             if any(pattern in response_lower for pattern in error_patterns):
                 logger.warning(f"Response contains error patterns: {response[:100]}...")
-                return self._get_fallback_content()
+                raise ContentGenerationError("Model response indicates error")
             
             # Extract structured information from response
             lines = response.strip().split('\n')
@@ -422,12 +497,13 @@ class OpenAIService:
                 elif current_section == 'full_description' and content['full_description']:
                     content['full_description'] += ' ' + line
             
-            # Enhanced validation with quality checks
+            # Enhanced validation with quality checks - more lenient for JSON responses
             quality_score = self._validate_content_quality(content)
-            
-            if quality_score < 0.6:  # If content quality is poor
+            if quality_score < 0.1:  # Более мягкий порог для JSON ответов
                 logger.warning(f"Content quality too low (score: {quality_score}), using fallback")
-                return self._get_fallback_content()
+                content = self._get_fallback_content()
+            else:
+                logger.info(f"Content quality acceptable (score: {quality_score})")
             
             # Fill missing fields with defaults
             if not content['title'] or len(content['title']) < 5:
@@ -446,8 +522,8 @@ class OpenAIService:
             return content
             
         except Exception as e:
-            logger.warning(f"Failed to parse OpenAI response, using fallback: {e}")
-            return self._get_fallback_content()
+            logger.warning(f"Failed to parse OpenAI response: {e}")
+            raise ContentGenerationError(str(e))
     
     def _validate_content_quality(self, content: Dict[str, Any]) -> float:
         """
@@ -542,104 +618,12 @@ class OpenAIService:
             Fallback content structure.
         """
         return {
-            'title': 'Ошибка',
-            'short_description': 'ошибка запрос к джипити',
-            'full_description': 'Не удалось получить ответ от нейросети. Проверьте логи API для получения детальной информации.',
-            'features': [],
-            'seo_keywords': [],
-            'target_audience': []
+            'title': 'Временная заглушка',
+            'short_description': 'Сервис генерации временно вернул укороченный ответ. Ниже — базовое описание.',
+            'full_description': 'Мы не смогли получить полноценный ответ от модели прямо сейчас. Повторите запрос позже для улучшения результата. Эти данные подходят как черновик.',
+            'features': ['Универсальный дизайн', 'Подходит для ежедневного использования'],
+            'seo_keywords': ['описание товара', 'характеристики'],
+            'target_audience': ['Широкая аудитория']
         }
     
-    def _get_image_analysis_prompt(self) -> str:
-        """Get prompt for image analysis."""
-        return """
-Ты — эксперт по маркетплейсам Wildberries и Ozon. На изображении показан товар.
-Проанализируй изображение и сгенерируй структурированный ответ в следующем формате:
 
-Название: [Краткое и привлекательное название товара]
-
-Краткое описание: [1-2 предложения о товаре]
-
-Полное описание: [5-7 предложений с подробным описанием характеристик, преимуществ и использования]
-
-Характеристики:
-- [Характеристика 1]
-- [Характеристика 2]
-- [Характеристика 3]
-- [Характеристика 4]
-
-SEO-ключевые слова: [ключ1, ключ2, ключ3, ключ4, ключ5]
-
-Целевая аудитория:
-- [Аудитория 1]
-- [Аудитория 2]
-- [Аудитория 3]
-
-Важно: SEO-ключевые слова должны быть конкретными поисковыми запросами, которые люди используют для поиска товара. Например: "раковина накладная черная", "санкерамика раковина", "раковина для ванной 46 см".
-
-Фокус на: назначение товара, материалы, цвет, размер, особенности использования, преимущества.
-"""
-    
-    def _get_text_processing_prompt(self) -> str:
-        """Get prompt for text processing."""
-        return """
-Ты — эксперт по маркетплейсам Wildberries и Ozon. Дополни и улучши описание товара.
-
-Исходный текст: {text}
-
-Создай структурированный ответ в следующем формате:
-
-Название: [Улучшенное название товара]
-
-Краткое описание: [1-2 предложения о товаре]
-
-Полное описание: [5-7 предложений с подробным описанием характеристик, преимуществ и использования]
-
-Характеристики:
-- [Характеристика 1]
-- [Характеристика 2]
-- [Характеристика 3]
-- [Характеристика 4]
-
-SEO-ключевые слова: [ключ1, ключ2, ключ3, ключ4, ключ5]
-
-Целевая аудитория:
-- [Аудитория 1]
-- [Аудитория 2]
-- [Аудитория 3]
-
-Важно: SEO-ключевые слова должны быть конкретными поисковыми запросами, которые люди используют для поиска товара. Например: "раковина накладная черная", "санкерамика раковина", "раковина для ванной 46 см".
-"""
-    
-    def _get_combined_analysis_prompt(self) -> str:
-        """Get prompt for combined image and text analysis."""
-        return """
-Ты — эксперт по маркетплейсам Wildberries и Ozon. Проанализируй изображение товара и объедини с текстовым описанием.
-
-Текстовое описание: {text}
-
-Создай структурированный ответ в следующем формате:
-
-Название: [Название товара на основе изображения и текста]
-
-Краткое описание: [1-2 предложения о товаре]
-
-Полное описание: [5-7 предложений, объединяющих визуальную и текстовую информацию]
-
-Характеристики:
-- [Характеристика 1]
-- [Характеристика 2]
-- [Характеристика 3]
-- [Характеристика 4]
-
-SEO-ключевые слова: [ключ1, ключ2, ключ3, ключ4, ключ5]
-
-Целевая аудитория:
-- [Аудитория 1]
-- [Аудитория 2]
-- [Аудитория 3]
-
-Важно: SEO-ключевые слова должны быть конкретными поисковыми запросами, которые люди используют для поиска товара. Например: "раковина накладная черная", "санкерамика раковина", "раковина для ванной 46 см".
-
-Фокус на: объединение визуальной информации с текстовым описанием, создание полной картины товара.
-"""

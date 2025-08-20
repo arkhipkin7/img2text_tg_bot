@@ -1,41 +1,25 @@
-"""
-Главный файл для запуска Telegram бота
-"""
 import asyncio
-import logging
 import os
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.enums import ParseMode
-from aiogram.types import BotCommand, Message
+from aiogram.types import BotCommand
 
-from config import BOT_TOKEN
-from handlers import start, process_image, process_text, process_both, admin
-import logging
+from config import BOT_TOKEN, ADMIN_ID
+from handlers import start, process_image, process_text, process_both, admin, subscriptions
+from shared.logging_config import setup_logging
+from shared.utils import FileUtils
 
-def setup_logging():
-    """Настройка логирования"""
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
-
-# Настройка логирования
-setup_logging()
-logger = logging.getLogger(__name__)
+logger = setup_logging(__name__)
 
 async def main():
-    """Основная функция запуска бота"""
     try:
-        # Создаем папку для временных файлов
-        os.makedirs("temp", exist_ok=True)
+        FileUtils.ensure_temp_dir()
         
-        # Инициализируем бота и диспетчер
         from aiogram.client.default import DefaultBotProperties
         bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
         dp = Dispatcher(storage=MemoryStorage())
         
-        # Устанавливаем команды бота
         await bot.set_my_commands([
             BotCommand(command="start", description="🚀 Запустить бота"),
             BotCommand(command="help", description="ℹ️ Как пользоваться ботом"),
@@ -46,17 +30,31 @@ async def main():
             BotCommand(command="fallback", description="🔄 Переключить режим (админ)")
         ])
         
-        # Регистрируем роутеры (порядок важен!)
         dp.include_router(start.router)
-        dp.include_router(process_image.router)  # Сначала изображения
-        dp.include_router(process_both.router)   # Потом комбинированная обработка
-        dp.include_router(process_text.router)   # В последнюю очередь текст
+        dp.include_router(subscriptions.router)
+        dp.include_router(process_image.router)
+        dp.include_router(process_text.router)
+        dp.include_router(process_both.router)
         dp.include_router(admin.router)
         
-        # Обработчик ошибок
         @dp.errors()
         async def errors_handler(update, exception):
-            logger.error(f"Ошибка при обработке {update}: {exception}")
+            logger.error(f"Ошибка при обработке обновления: {exception}")
+            try:
+                if ADMIN_ID:
+                    # Получаем информацию о пользователе из обновления
+                    user_info = "неизвестен"
+                    if hasattr(update, 'from_user') and update.from_user:
+                        user_info = f"ID: {update.from_user.id}"
+                    elif hasattr(update, 'message') and update.message and update.message.from_user:
+                        user_info = f"ID: {update.message.from_user.id}"
+                    elif hasattr(update, 'callback_query') and update.callback_query and update.callback_query.from_user:
+                        user_info = f"ID: {update.callback_query.from_user.id}"
+                    
+                    error_msg = f"⚠️ Ошибка в боте\nПользователь: {user_info}\nОшибка: {str(exception)[:400]}"
+                    await bot.send_message(ADMIN_ID, error_msg)
+            except Exception as notify_error:
+                logger.error(f"Не удалось отправить уведомление об ошибке: {notify_error}")
             return True
         
         logger.info("Бот запускается...")

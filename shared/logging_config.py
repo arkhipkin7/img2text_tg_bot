@@ -7,6 +7,7 @@ from typing import Optional
 from shared.constants import LOG_LEVEL
 
 def setup_logging(
+    name: Optional[str] = None,
     level: Optional[str] = None,
     format_string: Optional[str] = None,
     log_file: Optional[str] = None
@@ -15,6 +16,7 @@ def setup_logging(
     Настройка логирования
     
     Args:
+        name: Имя логгера
         level: Уровень логирования
         format_string: Формат сообщений
         log_file: Путь к файлу логов
@@ -32,7 +34,7 @@ def setup_logging(
     formatter = logging.Formatter(format_string)
     
     # Создаем логгер
-    logger = logging.getLogger()
+    logger = logging.getLogger(name or __name__)
     logger.setLevel(getattr(logging, level.upper()))
     
     # Очищаем существующие обработчики

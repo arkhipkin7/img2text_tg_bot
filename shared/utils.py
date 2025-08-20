@@ -5,14 +5,9 @@ import os
 import logging
 from typing import Optional, Dict, Any
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from .constants import MAX_FILE_SIZE, MAX_TEXT_LENGTH, SUPPORTED_IMAGE_FORMATS, TEMP_DIR
 
 logger = logging.getLogger(__name__)
-
-# Константы
-MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB
-MAX_TEXT_LENGTH = 5000
-SUPPORTED_IMAGE_FORMATS = {'.jpg', '.jpeg', '.png', '.webp'}
-TEMP_DIR = "temp"
 
 class FileUtils:
     """Утилиты для работы с файлами"""
@@ -45,7 +40,7 @@ class FileUtils:
             return False
         
         # Проверяем расширение
-        file_ext = os.path.splitext(file_path)[1].lower()
+        file_ext = os.path.splitext(file_path)[1].lower().lstrip('.')
         if file_ext not in SUPPORTED_IMAGE_FORMATS:
             logger.warning(f"Неподдерживаемый формат файла: {file_ext}")
             return False
@@ -75,6 +70,18 @@ class KeyboardFactory:
     def create_back_button() -> InlineKeyboardMarkup:
         """Создает кнопку 'Назад'"""
         return InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start")
+            ]
+        ])
+
+    @staticmethod
+    def create_retry_keyboard(retry_callback: str) -> InlineKeyboardMarkup:
+        """Создает клавиатуру с кнопкой 'Попробовать ещё раз' и 'Назад'"""
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(text="🔁 Попробовать ещё раз", callback_data=retry_callback)
+            ],
             [
                 InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start")
             ]

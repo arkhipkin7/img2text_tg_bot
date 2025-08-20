@@ -161,3 +161,16 @@ models/*.pth
 # Logs
 logs/
 *.log
+
+# Development files
+debug_response.py
+test_formatting.py
+test_*.py
+.env.backup
+TODO.md
+docs/
+scripts/
+Makefile
+
+# Optimization files
+OPTIMIZATION_REPORT.md

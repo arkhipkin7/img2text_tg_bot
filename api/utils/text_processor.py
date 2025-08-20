@@ -1,134 +1,163 @@
 """
-Утилиты для обработки текста
+Утилиты для обработки текста и валидации контента.
+
+Этот модуль содержит функции для валидации структуры контента,
+форматирования ответов и генерации запасного контента.
 """
-import re
-import json
-from typing import List, Dict, Any
-from shared.exceptions import ContentGenerationError
+
+import logging
+from typing import Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
+
+
+def validate_content_structure(content: Dict[str, Any]) -> bool:
+    """
+    Валидирует структуру сгенерированного контента.
+    
+    Parameters
+    ----------
+    content : Dict[str, Any]
+        Контент для валидации.
+        
+    Returns
+    -------
+    bool
+        True если структура валидна.
+        
+    Raises
+    ------
+    ValueError
+        Если структура контента невалидна.
+    """
+    if not isinstance(content, dict):
+        raise ValueError("Контент должен быть словарем")
+    
+    required_fields = ['title', 'short_description', 'full_description']
+    
+    for field in required_fields:
+        if field not in content:
+            raise ValueError(f"Отсутствует обязательное поле: {field}")
+        
+        if not isinstance(content[field], str) or not content[field].strip():
+            raise ValueError(f"Поле '{field}' должно быть непустой строкой")
+    
+    # Проверяем дополнительные поля если они есть
+    optional_fields = ['features', 'seo_keywords', 'target_audience', 'usage_scenarios']
+    for field in optional_fields:
+        if field in content and not isinstance(content[field], (str, list)):
+            raise ValueError(f"Поле '{field}' должно быть строкой или списком")
+    
+    logger.debug("Структура контента валидна")
+    return True
+
+
+def format_content_for_response(content: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Форматирует контент для ответа API.
+    
+    Parameters
+    ----------
+    content : Dict[str, Any]
+        Сырой контент от генератора.
+        
+    Returns
+    -------
+    Dict[str, Any]
+        Отформатированный контент.
+    """
+    # Безопасно обрабатываем строки и списки
+    target_audience = content.get('target_audience', [])
+    if isinstance(target_audience, str):
+        target_audience = target_audience.strip()
+    
+    formatted = {
+        'title': content.get('title', '').strip(),
+        'short_description': content.get('short_description', '').strip(),
+        'detailed_description': content.get('full_description', '').strip(),
+        'features': content.get('features', []),
+        'seo_keywords': content.get('seo_keywords', []),
+        'target_audience': target_audience,
+        'usage_scenarios': content.get('usage_scenarios', [])
+    }
+    
+    # Убираем пустые поля
+    formatted = {k: v for k, v in formatted.items() if v}
+    
+    # Обрабатываем списки - убираем пустые элементы
+    for field in ['features', 'seo_keywords', 'usage_scenarios']:
+        if field in formatted and isinstance(formatted[field], list):
+            formatted[field] = [item.strip() for item in formatted[field] if item.strip()]
+            if not formatted[field]:  # Если список стал пустым
+                del formatted[field]
+    
+    logger.debug("Контент отформатирован для ответа")
+    return formatted
+
+
+
+
 
 def clean_text(text: str) -> str:
     """
-    Очищает текст от лишних символов и форматирования
+    Очищает текст от лишних символов и форматирует.
     
-    Args:
-        text: Исходный текст
+    Parameters
+    ----------
+    text : str
+        Исходный текст.
         
-    Returns:
-        Очищенный текст
+    Returns
+    -------
+    str
+        Очищенный текст.
     """
     if not text:
         return ""
     
-    # Удаляем лишние пробелы
-    text = re.sub(r'\s+', ' ', text.strip())
+    # Убираем лишние пробелы и переносы строк
+    cleaned = ' '.join(text.split())
     
-    # Удаляем специальные символы, но оставляем пунктуацию
-    text = re.sub(r'[^\w\s\.\,\!\?\-\:\;\(\)]', '', text)
+    # Убираем потенциально опасные символы
+    import re
+    cleaned = re.sub(r'[<>]', '', cleaned)
     
-    return text
+    return cleaned.strip()
 
-def extract_json_from_text(text: str) -> Dict[str, Any]:
-    """
-    Извлекает JSON из текста
-    
-    Args:
-        text: Текст, содержащий JSON
-        
-    Returns:
-        Словарь с данными из JSON
-        
-    Raises:
-        ContentGenerationError: Если не удается извлечь JSON
-    """
-    try:
-        # Ищем JSON в тексте
-        json_match = re.search(r'\{.*\}', text, re.DOTALL)
-        if json_match:
-            json_str = json_match.group()
-            return json.loads(json_str)
-        else:
-            raise ContentGenerationError("JSON не найден в тексте")
-    except json.JSONDecodeError as e:
-        raise ContentGenerationError(f"Ошибка парсинга JSON: {e}")
 
-def validate_content_structure(content: Dict[str, Any]) -> bool:
+def truncate_text(text: str, max_length: int = 1000) -> str:
     """
-    Проверяет структуру сгенерированного контента
+    Обрезает текст до указанной длины.
     
-    Args:
-        content: Словарь с контентом
+    Parameters
+    ----------
+    text : str
+        Исходный текст.
+    max_length : int, optional
+        Максимальная длина (по умолчанию 1000).
         
-    Returns:
-        True если структура корректна
-        
-    Raises:
-        ContentGenerationError: Если структура некоррекна
+    Returns
+    -------
+    str
+        Обрезанный текст.
     """
-    required_fields = ['title', 'short_description', 'full_description', 'features', 'seo_keywords', 'target_audience']
+    if not text or len(text) <= max_length:
+        return text
     
-    for field in required_fields:
-        if field not in content:
-            raise ContentGenerationError(f"Отсутствует обязательное поле: {field}")
-        
-        # if not content[field]:
-        #     raise ContentGenerationError(f"Поле {field} не может быть пустым")
+    # Пытаемся обрезать по последнему предложению
+    truncated = text[:max_length]
+    last_sentence_end = max(
+        truncated.rfind('.'),
+        truncated.rfind('!'),
+        truncated.rfind('?')
+    )
     
-    # Проверяем типы полей
-    if not isinstance(content['title'], str):
-        raise ContentGenerationError("Поле 'title' должно быть строкой")
+    if last_sentence_end > max_length * 0.8:  # Если нашли конец предложения не слишком рано
+        return truncated[:last_sentence_end + 1]
     
-    if not isinstance(content['short_description'], str):
-        raise ContentGenerationError("Поле 'short_description' должно быть строкой")
+    # Иначе обрезаем по последнему пробелу
+    last_space = truncated.rfind(' ')
+    if last_space > max_length * 0.8:
+        return truncated[:last_space] + '...'
     
-    if not isinstance(content['full_description'], str):
-        raise ContentGenerationError("Поле 'full_description' должно быть строкой")
-    
-    if not isinstance(content['features'], list):
-        raise ContentGenerationError("Поле 'features' должно быть списком")
-    
-    if not isinstance(content['seo_keywords'], list):
-        raise ContentGenerationError("Поле 'seo_keywords' должно быть списком")
-    
-    if not isinstance(content['target_audience'], list):
-        raise ContentGenerationError("Поле 'target_audience' должно быть списком")
-    
-    return True
-
-def format_content_for_response(content: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Форматирует контент для ответа API
-    
-    Args:
-        content: Словарь с контентом
-        
-    Returns:
-        Отформатированный контент
-    """
-    return {
-        'title': clean_text(content['title']),
-        'short_description': clean_text(content['short_description']),
-        'full_description': clean_text(content['full_description']),
-        'features': [clean_text(feature) for feature in content['features'] if feature],
-        'seo_keywords': [clean_text(keyword) for keyword in content['seo_keywords'] if keyword],
-        'target_audience': [clean_text(audience) for audience in content['target_audience'] if audience]
-    }
-
-def generate_fallback_content(content_type: str, text: str = None) -> Dict[str, Any]:
-    """
-    Генерирует fallback контент при недоступности основной модели
-    
-    Args:
-        content_type: Тип контента
-        text: Текстовое описание (если есть)
-        
-    Returns:
-        Fallback контент
-    """
-    return {
-        'title': 'Ошибка',
-        'short_description': 'ошибка запрос к джипити',
-        'full_description': 'Не удалось получить ответ от нейросети. Проверьте логи API для получения детальной информации.',
-        'features': [],
-        'seo_keywords': [],
-        'target_audience': []
-    } 
+    return truncated + '...'

@@ -37,32 +37,9 @@ class ContentGenerator:
         logger.info(f"Генерация контента из изображения: {image_path}")
         
         if self.use_api:
-            try:
-                async with APIClient() as client:
-                    return await client.generate_from_image(image_path)
-            except APIError as e:
-                logger.warning(f"API недоступен, используем fallback: {e}")
-                # Fallback к заглушке
-            except Exception as e:
-                logger.error(f"Неожиданная ошибка API, используем fallback: {e}")
-                # Fallback к заглушке
-        
-        # Fallback: заглушка
-        await self._simulate_api_call()
-        
-        product_type = random.choice(self.product_types)
-        brand = random.choice(self.brands)
-        
-        return {
-            "title": f"{brand} {product_type} - Премиум качество",
-            "short_description": f"Стильный и функциональный {product_type.lower()} от бренда {brand}",
-            "full_description": f"Представляем вашему вниманию высококачественный {product_type.lower()} от известного бренда {brand}. "
-                               f"Этот продукт сочетает в себе стильный дизайн, инновационные технологии и непревзойденное качество. "
-                               f"Идеально подходит для повседневного использования и станет отличным дополнением к вашему образу.",
-            "features": random.sample(self.features, min(5, len(self.features))),
-            "seo_keywords": random.sample(self.seo_keywords, min(8, len(self.seo_keywords))),
-            "target_audience": random.sample(self.target_audience, min(3, len(self.target_audience)))
-        }
+            async with APIClient() as client:
+                return await client.generate_from_image(image_path)
+        raise RuntimeError("API отключен")
 
     async def generate_from_text(self, text: str) -> Dict:
         """
@@ -77,32 +54,9 @@ class ContentGenerator:
         logger.info(f"Генерация контента из текста: {text[:50]}...")
         
         if self.use_api:
-            try:
-                async with APIClient() as client:
-                    return await client.generate_from_text(text)
-            except APIError as e:
-                logger.warning(f"API недоступен, используем fallback: {e}")
-                # Fallback к заглушке
-            except Exception as e:
-                logger.error(f"Неожиданная ошибка API, используем fallback: {e}")
-                # Fallback к заглушке
-        
-        # Fallback: заглушка
-        await self._simulate_api_call()
-        
-        product_type = random.choice(self.product_types)
-        brand = random.choice(self.brands)
-        
-        return {
-            "title": f"{brand} {product_type} - Инновационное решение",
-            "short_description": f"Уникальный {product_type.lower()} с передовыми технологиями",
-            "full_description": f"На основе вашего описания создан идеальный {product_type.lower()} от бренда {brand}. "
-                               f"Продукт разработан с учетом всех современных требований и потребностей пользователей. "
-                               f"Отличается высоким качеством, надежностью и стильным дизайном.",
-            "features": random.sample(self.features, min(6, len(self.features))),
-            "seo_keywords": random.sample(self.seo_keywords, min(10, len(self.seo_keywords))),
-            "target_audience": random.sample(self.target_audience, min(4, len(self.target_audience)))
-        }
+            async with APIClient() as client:
+                return await client.generate_from_text(text)
+        raise RuntimeError("API отключен")
 
     async def generate_from_both(self, image_path: str, text: str) -> Dict:
         """
@@ -118,32 +72,9 @@ class ContentGenerator:
         logger.info(f"Генерация контента из изображения и текста: {text[:50]}...")
         
         if self.use_api:
-            try:
-                async with APIClient() as client:
-                    return await client.generate_from_both(image_path, text)
-            except APIError as e:
-                logger.warning(f"API недоступен, используем fallback: {e}")
-                # Fallback к заглушке
-            except Exception as e:
-                logger.error(f"Неожиданная ошибка API, используем fallback: {e}")
-                # Fallback к заглушке
-        
-        # Fallback: заглушка
-        await self._simulate_api_call()
-        
-        product_type = random.choice(self.product_types)
-        brand = random.choice(self.brands)
-        
-        return {
-            "title": f"{brand} {product_type} - Идеальное сочетание стиля и функциональности",
-            "short_description": f"Эксклюзивный {product_type.lower()} с уникальными характеристиками",
-            "full_description": f"Комбинированный анализ изображения и описания позволил создать идеальный {product_type.lower()} "
-                               f"от бренда {brand}. Продукт полностью соответствует вашим требованиям и превосходит ожидания. "
-                               f"Сочетает в себе лучшие качества: стиль, функциональность, качество и инновации.",
-            "features": random.sample(self.features, min(7, len(self.features))),
-            "seo_keywords": random.sample(self.seo_keywords, min(12, len(self.seo_keywords))),
-            "target_audience": random.sample(self.target_audience, min(5, len(self.target_audience)))
-        }
+            async with APIClient() as client:
+                return await client.generate_from_both(image_path, text)
+        raise RuntimeError("API отключен")
 
     async def _simulate_api_call(self, delay: float = 1.0):
         """
@@ -169,7 +100,7 @@ class ContentGenerator:
         
         result += f"📝 **Краткое описание:**\n{content['short_description']}\n\n"
         
-        result += f"📄 **Полное описание:**\n{content['full_description']}\n\n"
+        result += f"📄 **Полное описание:**\n{content['detailed_description']}\n\n"
         
         result += f"✨ **Основные характеристики:**\n"
         for i, feature in enumerate(content['features'], 1):
@@ -177,11 +108,12 @@ class ContentGenerator:
         result += "\n"
         
         result += f"🔍 **SEO-ключи для продвижения:**\n"
-        result += ", ".join(content['seo_keywords']) + "\n\n"
+        for keyword in content['seo_keywords']:
+            result += f"• {keyword}\n"
+        result += "\n"
         
         result += f"👥 **Целевая аудитория:**\n"
-        for i, audience in enumerate(content['target_audience'], 1):
-            result += f"{i}. {audience}\n\n"
+        result += ", ".join(content['target_audience']) + "\n\n"
         
         result += "✅ **Готово!** Используйте это описание для создания карточки товара на маркетплейсах."
         

@@ -3,3 +3,6 @@ python-dotenv==1.0.0
 Pillow==10.1.0
 aiofiles==23.2.1
 aiohttp==3.9.5 
+redis==5.0.1
+# Для работы с ЮMoney API
+aiohttp[speedups]==3.9.5

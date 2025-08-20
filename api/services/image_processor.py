@@ -6,7 +6,7 @@ import os
 import tempfile
 from typing import Optional
 from PIL import Image
-from api.config import SUPPORTED_IMAGE_FORMATS, MAX_FILE_SIZE
+from shared.constants import SUPPORTED_IMAGE_FORMATS, MAX_FILE_SIZE
 from shared.exceptions import FileProcessingError, ValidationError
 
 logger = logging.getLogger(__name__)

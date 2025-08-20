@@ -12,8 +12,7 @@ from typing import Dict, Any, Optional
 from api.services.openai_service import OpenAIService
 from api.utils.text_processor import (
     validate_content_structure,
-    format_content_for_response,
-    generate_fallback_content
+    format_content_for_response
 )
 from shared.exceptions import ContentGenerationError
 
@@ -57,22 +56,12 @@ class ContentGeneratorService:
         """
         logger.info(f"Generating content from image: {image_path}")
         
-        try:
-            if self.use_openai and self.openai_service:
-                # Use OpenAI service
-                content = await self.openai_service.generate_from_image(image_path)
-            else:
-                # Use fallback
-                content = generate_fallback_content("image_only")
-            
-            # Validate and format content
-            validate_content_structure(content)
-            return format_content_for_response(content)
-            
-        except Exception as e:
-            logger.error(f"Error generating content from image: {e}")
-            # Return fallback content
-            return format_content_for_response(generate_fallback_content("image_only"))
+        if not (self.use_openai and self.openai_service):
+            raise ContentGenerationError("OpenAI service not available")
+
+        content = await self.openai_service.generate_from_image(image_path)
+        validate_content_structure(content)
+        return format_content_for_response(content)
     
     async def generate_from_text(self, text: str) -> Dict[str, Any]:
         """
@@ -91,22 +80,12 @@ class ContentGeneratorService:
         """
         logger.info(f"Generating content from text: {text[:50]}...")
         
-        try:
-            if self.use_openai and self.openai_service:
-                # Use OpenAI service
-                content = await self.openai_service.generate_from_text(text)
-            else:
-                # Use fallback
-                content = generate_fallback_content("text_only", text)
-            
-            # Validate and format content
-            validate_content_structure(content)
-            return format_content_for_response(content)
-            
-        except Exception as e:
-            logger.error(f"Error generating content from text: {e}")
-            # Return fallback content
-            return format_content_for_response(generate_fallback_content("text_only", text))
+        if not (self.use_openai and self.openai_service):
+            raise ContentGenerationError("OpenAI service not available")
+
+        content = await self.openai_service.generate_from_text(text)
+        validate_content_structure(content)
+        return format_content_for_response(content)
     
     async def generate_from_both(self, image_path: str, text: str) -> Dict[str, Any]:
         """
@@ -127,22 +106,12 @@ class ContentGeneratorService:
         """
         logger.info(f"Generating content from image and text: {text[:50]}...")
         
-        try:
-            if self.use_openai and self.openai_service:
-                # Use OpenAI service
-                content = await self.openai_service.generate_from_both(image_path, text)
-            else:
-                # Use fallback
-                content = generate_fallback_content("both", text)
-            
-            # Validate and format content
-            validate_content_structure(content)
-            return format_content_for_response(content)
-            
-        except Exception as e:
-            logger.error(f"Error generating content from image and text: {e}")
-            # Return fallback content
-            return format_content_for_response(generate_fallback_content("both", text))
+        if not (self.use_openai and self.openai_service):
+            raise ContentGenerationError("OpenAI service not available")
+
+        content = await self.openai_service.generate_from_both(image_path, text)
+        validate_content_structure(content)
+        return format_content_for_response(content)
     
     async def enable_openai(self):
         """Enable OpenAI service usage."""

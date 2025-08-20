@@ -1,301 +1,212 @@
 """
-Обработчики команды /start и главного меню
+Рефакторенные обработчики команды /start и главного меню.
+Значительно упрощен за счет выноса общей логики в утилиты.
 """
+
 import logging
 from aiogram import Router, F
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
-from config import MESSAGES
+from aiogram.fsm.context import FSMContext
+
+from shared.constants import MESSAGES
+from bot.utils.handlers_common import HandlerUtils
 
 logger = logging.getLogger(__name__)
 router = Router()
+
 
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     """Обработчик команды /start"""
     logger.info(f"Получена команда /start от пользователя {message.from_user.id}")
-    await show_main_menu(message)
+    
+    from bot.utils.quota_utils import quota_utils
+    
+    user_id = message.from_user.id
+    
+    # Получаем статус квоты
+    quota_status = await quota_utils.get_quota_indicator(user_id)
+    quota_detailed = await quota_utils.get_quota_status_text(user_id)
+    
+    # Показываем демо для новых пользователей
+    remaining = await quota_utils.subs.get_remaining(user_id)
+    is_new_user = remaining >= 3  # Полная квота = новый пользователь
+    
+    message_text = MESSAGES["welcome"].format(
+        quota_status=f"{quota_status}\n{quota_detailed}"
+    )
+    
+    keyboard = HandlerUtils.create_main_menu_keyboard(show_demo=is_new_user)
+    await message.answer(message_text, reply_markup=keyboard, parse_mode="Markdown")
+
 
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     """Обработчик команды /help"""
-    await show_help_menu(message)
+    keyboard = HandlerUtils.create_back_keyboard()
+    await message.answer(MESSAGES["help"], reply_markup=keyboard, parse_mode="Markdown")
 
-@router.message(Command("image_generate"))
-async def cmd_image_generate(message: Message):
-    """Обработчик команды /image_generate"""
-    await show_image_generate_menu(message)
 
-@router.message(Command("text_generate"))
-async def cmd_text_generate(message: Message):
-    """Обработчик команды /text_generate"""
-    await show_text_generate_menu(message)
+# Callback обработчики главного меню
+@router.callback_query(F.data == "back_to_start")
+async def back_to_start(callback: CallbackQuery, state: FSMContext):
+    """Возврат в главное меню"""
+    # Очищаем временные файлы при возврате в главное меню
+    data = await state.get_data()
+    image_path = data.get("image_path")
+    if image_path:
+        try:
+            import os
+            if os.path.exists(image_path):
+                os.remove(image_path)
+                logger.info(f"Временный файл удален при возврате в меню: {image_path}")
+        except Exception as e:
+            logger.warning(f"Не удалось удалить временный файл: {e}")
+    
+    await state.clear()
+    await HandlerUtils.send_welcome_menu(callback)
+    await callback.answer()
 
-@router.message(Command("both_generate"))
-async def cmd_both_generate(message: Message):
-    """Обработчик команды /both_generate"""
-    await show_both_generate_menu(message)
-
-async def show_main_menu(message: Message):
-    """Показать главное меню"""
-    try:
-        # Создаем клавиатуру с кнопками
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="📷 Обработать изображение", callback_data="process_image_only"),
-                InlineKeyboardButton(text="📝 Обработать текст", callback_data="process_text_only")
-            ],
-            [
-                InlineKeyboardButton(text="📷📝 Обработать оба", callback_data="process_both")
-            ],
-            [
-                InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")
-            ]
-        ])
-        
-        await message.answer(
-            MESSAGES["welcome"],
-            reply_markup=keyboard
-        )
-        
-        logger.info(f"Пользователь {message.from_user.id} запустил бота")
-        
-    except Exception as e:
-        logger.error(f"Ошибка в обработчике start: {e}")
-        await message.answer(MESSAGES["error"])
-
-async def show_help_menu(message: Message):
-    """Показать меню помощи"""
-    try:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start")
-            ]
-        ])
-        
-        help_text = (
-            "🤖 **Помощь по использованию бота**\n\n"
-            "**Доступные функции:**\n"
-            "📷 **Обработка изображения** - загрузите фото товара\n"
-            "📝 **Обработка текста** - отправьте описание товара\n"
-            "📷📝 **Обработка обоих** - изображение + описание\n\n"
-            "**Что генерируется:**\n"
-            "• Название товара\n"
-            "• Краткое описание\n"
-            "• Полное описание\n"
-            "• Основные характеристики\n"
-            "• SEO-ключи\n"
-            "• Целевая аудитория\n\n"
-            "**Поддерживаемые форматы:**\n"
-            "• Изображения: JPG, JPEG, PNG, WEBP\n"
-            "• Максимальный размер: 20MB\n"
-            "• Максимальная длина текста: 5000 символов"
-        )
-        
-        await message.answer(help_text, reply_markup=keyboard, parse_mode="Markdown")
-        
-    except Exception as e:
-        logger.error(f"Ошибка в обработчике help: {e}")
-        await message.answer(MESSAGES["error"])
-
-async def show_image_generate_menu(message: Message):
-    """Показать меню генерации по изображению"""
-    try:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start")
-            ]
-        ])
-        
-        await message.answer(
-            "📷 **Отправьте изображение товара**\n\n"
-            "Я проанализирую фото и создам:\n"
-            "• Название товара\n"
-            "• Описание с характеристиками\n"
-            "• SEO-ключи\n"
-            "• Целевую аудиторию",
-            reply_markup=keyboard
-        )
-        
-    except Exception as e:
-        logger.error(f"Ошибка в show_image_generate_menu: {e}")
-        await message.answer(MESSAGES["error"])
-
-async def show_text_generate_menu(message: Message):
-    """Показать меню генерации по тексту"""
-    try:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start")
-            ]
-        ])
-        
-        await message.answer(
-            "📝 **Отправьте описание товара**\n\n"
-            "Я дополню ваш текст:\n"
-            "• SEO-ключами для продвижения\n"
-            "• Характеристиками товара\n"
-            "• Определением целевой аудитории",
-            reply_markup=keyboard
-        )
-        
-    except Exception as e:
-        logger.error(f"Ошибка в show_text_generate_menu: {e}")
-        await message.answer(MESSAGES["error"])
-
-async def show_both_generate_menu(message: Message):
-    """Показать меню генерации по изображению и тексту"""
-    try:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start")
-            ]
-        ])
-        
-        await message.answer(
-            "📷📝 **Отправьте изображение товара**\n\n"
-            "После этого я попрошу вас добавить текстовое описание.\n\n"
-            "Вместе мы создадим полную карточку товара с:\n"
-            "• Анализом изображения\n"
-            "• Дополненным описанием\n"
-            "• SEO-оптимизацией",
-            reply_markup=keyboard
-        )
-        
-    except Exception as e:
-        logger.error(f"Ошибка в show_both_generate_menu: {e}")
-        await message.answer(MESSAGES["error"])
 
 @router.callback_query(F.data == "help")
-async def help_callback(callback):
-    """Обработчик кнопки 'Помощь'"""
-    try:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start")
-            ]
-        ])
-        
-        help_text = (
-            "🤖 **Помощь по использованию бота**\n\n"
-            "**Доступные функции:**\n"
-            "📷 **Обработка изображения** - загрузите фото товара\n"
-            "📝 **Обработка текста** - отправьте описание товара\n"
-            "📷📝 **Обработка обоих** - изображение + описание\n\n"
-            "**Что генерируется:**\n"
-            "• Название товара\n"
-            "• Краткое описание\n"
-            "• Полное описание\n"
-            "• Основные характеристики\n"
-            "• SEO-ключи\n"
-            "• Целевая аудитория\n\n"
-            "**Поддерживаемые форматы:**\n"
-            "• Изображения: JPG, JPEG, PNG, WEBP\n"
-            "• Максимальный размер: 20MB\n"
-            "• Максимальная длина текста: 5000 символов"
-        )
-        
-        await callback.message.edit_text(help_text, reply_markup=keyboard, parse_mode="Markdown")
-        await callback.answer()
-        
-    except Exception as e:
-        logger.error(f"Ошибка в help_callback: {e}")
-        await callback.answer("Произошла ошибка", show_alert=True)
+async def help_callback(callback: CallbackQuery):
+    """Показать помощь"""
+    keyboard = HandlerUtils.create_back_keyboard()
+    await callback.message.edit_text(MESSAGES["help"], reply_markup=keyboard, parse_mode="Markdown")
+    await callback.answer()
 
-@router.callback_query(F.data == "back_to_start")
-async def back_to_start_callback(callback):
-    """Обработчик кнопки 'Назад' к главному меню"""
-    try:
-        # Создаем клавиатуру с кнопками
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="📷 Обработать изображение", callback_data="process_image_only"),
-                InlineKeyboardButton(text="📝 Обработать текст", callback_data="process_text_only")
-            ],
-            [
-                InlineKeyboardButton(text="📷📝 Обработать оба", callback_data="process_both")
-            ],
-            [
-                InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")
-            ]
-        ])
-        
-        await callback.message.edit_text(
-            MESSAGES["welcome"],
-            reply_markup=keyboard
-        )
-        await callback.answer()
-        
-    except Exception as e:
-        logger.error(f"Ошибка в back_to_start_callback: {e}")
-        await callback.answer("Произошла ошибка", show_alert=True)
 
 @router.callback_query(F.data == "process_image_only")
-async def process_image_only_callback(callback):
+async def process_image_only_callback(callback: CallbackQuery):
     """Обработчик кнопки 'Обработать изображение'"""
-    try:
-        await callback.message.edit_text(
-            "📷 Отправьте изображение товара для обработки"
-        )
-        await callback.answer()
-        
-    except Exception as e:
-        logger.error(f"Ошибка в обработчике process_image_only_callback: {e}")
-        await callback.answer("Произошла ошибка", show_alert=True)
+    await callback.message.edit_text("📷 Отправьте изображение товара для обработки")
+    await callback.answer()
 
-@router.callback_query(F.data == "process_text_only")
-async def process_text_only_callback(callback):
+
+@router.callback_query(F.data == "process_text_only") 
+async def process_text_only_callback(callback: CallbackQuery):
     """Обработчик кнопки 'Обработать текст'"""
-    try:
-        await callback.message.edit_text(
-            "📝 Отправьте текстовое описание товара для обработки"
-        )
-        await callback.answer()
-        
-    except Exception as e:
-        logger.error(f"Ошибка в обработчике process_text_only_callback: {e}")
-        await callback.answer("Произошла ошибка", show_alert=True)
+    await callback.message.edit_text("📝 Отправьте текстовое описание товара для обработки")
+    await callback.answer()
+
 
 @router.callback_query(F.data == "process_both")
-async def process_both_callback(callback):
+async def process_both_callback(callback: CallbackQuery, state: FSMContext):
     """Обработчик кнопки 'Обработать оба'"""
+    from bot.handlers.process_both import BothProcessingStates
+    
+    # Устанавливаем состояние ожидания изображения
+    await state.set_state(BothProcessingStates.waiting_for_image)
+    
+    # Создаем кнопку "Назад"
+    from bot.utils.handlers_common import HandlerUtils
+    keyboard = HandlerUtils.create_back_keyboard()
+    
+    await callback.message.edit_text(
+        "📷 **Отправьте изображение товара**\n\n"
+        "После этого я попрошу вас добавить текстовое описание, и создам полную карточку товара.",
+        reply_markup=keyboard,
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "show_demo")
+async def show_demo_callback(callback: CallbackQuery):
+    """Показать демо-результат"""
     try:
+        keyboard = HandlerUtils.create_demo_keyboard()
         await callback.message.edit_text(
-            "📷📝 Отправьте изображение товара, а затем текстовое описание"
+            MESSAGES["demo_result"], 
+            reply_markup=keyboard, 
+            parse_mode="Markdown"
         )
         await callback.answer()
         
     except Exception as e:
-        logger.error(f"Ошибка в обработчике process_both_callback: {e}")
+        logger.error(f"Ошибка в show_demo_callback: {e}")
         await callback.answer("Произошла ошибка", show_alert=True)
 
-@router.callback_query(F.data == "generate_more")
-async def generate_more_callback(callback):
-    """Обработчик кнопки 'Сгенерировать еще'"""
+
+@router.callback_query(F.data == "copy_result")
+async def copy_result_callback(callback: CallbackQuery):
+    """Обработчик кнопки 'Скопировать'"""
     try:
-        # Создаем клавиатуру с кнопками
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="📷 Обработать изображение", callback_data="process_image_only"),
-                InlineKeyboardButton(text="📝 Обработать текст", callback_data="process_text_only")
-            ],
-            [
-                InlineKeyboardButton(text="📷📝 Обработать оба", callback_data="process_both")
-            ],
-            [
-                InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")
-            ]
-        ])
+        await callback.answer("📋 Текст скопирован! Вставьте в описание товара на маркетплейсе", show_alert=True)
         
-        await callback.message.edit_text(
-            "🔄 **Выберите тип обработки:**\n\n"
-            "📷 **Анализ фото** - создам описание по изображению\n"
-            "📝 **Дополнить текст** - добавлю SEO-ключи к вашему описанию\n"
-            "📷📝 **Полный анализ** - объединю фото и текст",
-            reply_markup=keyboard
-        )
+    except Exception as e:
+        logger.error(f"Ошибка в copy_result_callback: {e}")
+        await callback.answer("Произошла ошибка", show_alert=True)
+
+
+@router.callback_query(F.data.startswith("generate_more_"))
+async def generate_more_callback(callback: CallbackQuery, state: FSMContext):
+    """Обработчик кнопки 'Сгенерировать еще' - возвращает к началу текущего процесса"""
+    try:
+        # Получаем тип генерации из callback_data
+        generation_type = callback.data.split("_", 2)[2]  # generate_more_both -> both
+        logger.info(f"generate_more_callback: callback_data={callback.data}, generation_type={generation_type}")
+        
+        # Очищаем временные файлы при новой генерации
+        data = await state.get_data()
+        image_path = data.get("image_path")
+        if image_path:
+            try:
+                import os
+                if os.path.exists(image_path):
+                    os.remove(image_path)
+                    logger.info(f"Временный файл удален при новой генерации: {image_path}")
+            except Exception as e:
+                logger.warning(f"Не удалось удалить временный файл: {e}")
+        
+        await state.clear()
+        
+        # Убираем кнопки с текущего сообщения для сохранения истории
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except:
+            pass  # Игнорируем ошибки
+        
+        # Возвращаем к началу соответствующего процесса
+        if generation_type == "both":
+            # Для комбинированной генерации возвращаем к ожиданию фото
+            from bot.handlers.process_both import BothProcessingStates
+            await state.set_state(BothProcessingStates.waiting_for_image)
+            
+            from bot.utils.handlers_common import HandlerUtils
+            keyboard = HandlerUtils.create_back_keyboard()
+            
+            await callback.message.answer(
+                "📷 **Отправьте изображение товара**\n\n"
+                "После этого я попрошу вас добавить текстовое описание, и создам полную карточку товара.",
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
+        elif generation_type == "image":
+            # Для генерации только по фото
+            keyboard = HandlerUtils.create_back_keyboard()
+            await callback.message.answer(
+                "📷 **Отправьте изображение товара**\n\n"
+                "Я проанализирую фото и создам детальное описание товара.",
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
+        elif generation_type == "text":
+            # Для генерации только по тексту
+            keyboard = HandlerUtils.create_back_keyboard()
+            await callback.message.answer(
+                "📝 **Отправьте текстовое описание товара**\n\n"
+                "Я проанализирую ваш текст и создам полную карточку товара с SEO-оптимизацией.",
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
+        else:
+            # Если тип неизвестен, возвращаем в главное меню
+            await HandlerUtils.send_welcome_menu(callback, edit=True)
+        
         await callback.answer()
         
     except Exception as e:
         logger.error(f"Ошибка в generate_more_callback: {e}")
-        await callback.answer("Произошла ошибка", show_alert=True) 
+        await callback.answer("Произошла ошибка", show_alert=True)

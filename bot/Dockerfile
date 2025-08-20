@@ -29,5 +29,8 @@ RUN useradd --create-home --shell /bin/bash bot && \
     chown -R bot:bot /app
 USER bot
 
+# Добавляем пути проекта в PYTHONPATH, чтобы были доступны модули `bot` и `shared`
+ENV PYTHONPATH="/app/bot:/app"
+
 # Команда запуска
 CMD ["python", "bot/main.py"] 

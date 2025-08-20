@@ -20,7 +20,7 @@ class GenerateResponse(BaseModel):
     """Схема ответа с сгенерированным контентом"""
     title: str = Field(..., description="Название товара")
     short_description: str = Field(..., description="Краткое описание")
-    full_description: str = Field(..., description="Полное описание")
+    detailed_description: str = Field(..., description="Полное описание")
     features: List[str] = Field(..., description="Основные характеристики")
     seo_keywords: List[str] = Field(..., description="SEO-ключи")
     target_audience: List[str] = Field(..., description="Целевая аудитория")

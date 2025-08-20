@@ -1,25 +1,15 @@
-"""
-Конфигурация Telegram бота
-"""
 import os
 from typing import List
+from shared.constants import MESSAGES, MAX_FILE_SIZE, MAX_TEXT_LENGTH, API_TIMEOUT
 
-# Telegram Bot Configuration
 BOT_TOKEN = os.getenv('BOT_TOKEN', 'your_bot_token_here')
-
-# API Configuration
 API_BASE_URL = os.getenv('API_BASE_URL', 'http://localhost:8000')
-API_TIMEOUT = int(os.getenv('API_TIMEOUT', '60'))
 
-# Admin IDs
-ADMIN_IDS_STR = os.getenv('ADMIN_IDS', '123456789,987654321')
+ADMIN_IDS_STR = os.getenv('ADMIN_IDS', '')
 ADMIN_IDS: List[int] = [int(x.strip()) for x in ADMIN_IDS_STR.split(',') if x.strip()]
+ADMIN_ID_ENV = os.getenv('ADMIN_ID')
+ADMIN_ID = int(ADMIN_ID_ENV) if ADMIN_ID_ENV and ADMIN_ID_ENV.isdigit() else (ADMIN_IDS[0] if ADMIN_IDS else None)
 
-# File upload limits
-MAX_FILE_SIZE = int(os.getenv('MAX_FILE_SIZE', '20971520'))  # 20MB в байтах
-MAX_TEXT_LENGTH = int(os.getenv('MAX_TEXT_LENGTH', '5000'))
-
-# Supported image formats
 SUPPORTED_IMAGE_FORMATS_STR = os.getenv('SUPPORTED_IMAGE_FORMATS', 'jpg,jpeg,png,webp')
 SUPPORTED_IMAGE_FORMATS: List[str] = [x.strip() for x in SUPPORTED_IMAGE_FORMATS_STR.split(',')]
 
@@ -34,4 +24,9 @@ CONTENT_TYPES = {
     "image_only": "image_only",
     "text_only": "text_only", 
     "both": "both"
-} 
+}
+
+# ЮMoney (ЮKassa) настройки
+YOOMONEY_SHOP_ID = os.getenv("YOOMONEY_SHOP_ID")
+YOOMONEY_SECRET_KEY = os.getenv("YOOMONEY_SECRET_KEY") 
+YOOMONEY_RETURN_URL = os.getenv("YOOMONEY_RETURN_URL", "https://t.me/your_bot") 

@@ -1,212 +1,161 @@
 """
-Обработчики для обработки текста
+Рефакторенные обработчики для работы с текстом.
+Код значительно сокращен за счет использования ResultService.
 """
+
 import logging
 from aiogram import Router, F
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from config import MESSAGES, MAX_TEXT_LENGTH
-from services.generator import ContentGenerator
+
+from shared.constants import MESSAGES, MAX_TEXT_LENGTH
+from services.result_service import result_service
+from bot.utils.handlers_common import HandlerUtils
 
 logger = logging.getLogger(__name__)
 router = Router()
 
 class TextProcessingStates(StatesGroup):
     """Состояния для обработки текста"""
-    waiting_for_text = State()
+    waiting_for_image = State()
+
 
 @router.message(F.text)
 async def handle_text(message: Message, state: FSMContext):
-    """Обработчик получения текстового сообщения"""
+    """Обработчик получения текстового сообщения с прямой обработкой"""
     try:
+        # Игнорируем команды
+        if message.text.startswith('/'):
+            return
+        
         # Проверяем длину текста
         if len(message.text) > MAX_TEXT_LENGTH:
             await message.answer(MESSAGES["text_too_long"])
             return
         
-        # Проверяем, не является ли это командой
-        if message.text.startswith('/'):
-            return
+        from bot.utils.quota_utils import quota_utils
         
-        # Получаем текущее состояние
-        current_state = await state.get_state()
+        user_id = message.from_user.id
         
-        if current_state == TextProcessingStates.waiting_for_text.state:
-            # Если мы ждем текст для обработки
-            await process_text_only(message, state)
+        # Проверяем квоту сразу
+        if not result_service._is_admin(user_id):
+            remaining = await quota_utils.subs.get_remaining(user_id)
+            if remaining <= 0:
+                keyboard = HandlerUtils.create_quota_exceeded_keyboard()
+                await message.answer(MESSAGES["quota_exceeded"], reply_markup=keyboard, parse_mode="Markdown")
+                return
+        
+        # Отправляем сообщение о прямой обработке
+        quota_status = await quota_utils.get_quota_indicator(user_id)
+        processing_text = MESSAGES["direct_processing"].format(quota_status=quota_status)
+        processing_msg = await message.answer(processing_text, parse_mode="Markdown")
+        
+        # Прямая обработка через результирующий сервис
+        await result_service._consume_quota(user_id)
+        content = await result_service.generator.generate_from_text(message.text)
+        
+        # Удаляем сообщение о загрузке
+        try:
+            await processing_msg.delete()
+        except:
+            pass
+        
+        # Отправляем результат
+        formatted_content = result_service.generator.format_content(content)
+        
+        # Добавляем информацию о квоте после результата
+        quota_status_after = await quota_utils.get_quota_indicator(user_id)
+        if await quota_utils.should_show_upgrade_hint(user_id):
+            upgrade_hint = quota_utils.get_upgrade_hint()
+            formatted_content += f"\n\n{quota_status_after}\n{upgrade_hint}"
         else:
-            # Если это обычное текстовое сообщение, предлагаем варианты
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="✅ Обработать только текст", callback_data="process_text_now"),
-                    InlineKeyboardButton(text="📷 Добавить изображение", callback_data="add_image_to_text")
-                ],
-                [
-                    InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start")
-                ]
-            ])
-            
-            await message.answer(
-                MESSAGES["text_received"],
-                reply_markup=keyboard
-            )
-            
-            # Сохраняем текст в состоянии
-            await state.update_data(text=message.text)
+            formatted_content += f"\n\n{quota_status_after}"
         
-        logger.info(f"Пользователь {message.from_user.id} отправил текст: {message.text[:50]}...")
+        # Создаем упрощенную клавиатуру для результатов
+        show_upgrade_hint = await quota_utils.should_show_upgrade_hint(user_id)
+        keyboard = HandlerUtils.create_result_keyboard(show_upgrade_hint=show_upgrade_hint, generation_type="text")
+        await message.answer(formatted_content, parse_mode="Markdown", reply_markup=keyboard)
+        
+        # Сохраняем текст в состоянии
+        await state.update_data(text=message.text)
+        
+        logger.info(f"Прямая обработка текста завершена для пользователя {user_id}")
         
     except Exception as e:
         logger.error(f"Ошибка при обработке текста: {e}")
         await message.answer(MESSAGES["error"])
 
+
 @router.callback_query(F.data == "process_text_now")
-async def process_text_now_callback(callback, state: FSMContext):
-    """Обработчик кнопки 'Обработать только текст'"""
+async def process_text_now(callback: CallbackQuery, state: FSMContext):
+    """Обработка только текста"""
+    data = await state.get_data()
+    text = data.get("text")
+    
+    if not text:
+        await callback.message.edit_text("Текст не найден. Начните заново с /start")
+        await state.clear()
+        return
+    
+    # Используем централизованный сервис (создаем псевдо-message из callback)
+    # Для унификации API создаем wrapper
+    message_wrapper = callback.message
+    message_wrapper.from_user = callback.from_user
+    
+    await result_service.process_text_generation(message_wrapper, state, text)
+
+
+# Удалено: callback для добавления изображения к тексту больше не используется
+# так как убрали соответствующую кнопку из интерфейса результатов
+
+
+@router.message(TextProcessingStates.waiting_for_image, F.photo)
+async def handle_image_with_text(message: Message, state: FSMContext):
+    """Обработка изображения при наличии текста"""
     try:
-        # Получаем данные из состояния
+        # Получаем текст из состояния
         data = await state.get_data()
         text = data.get("text")
         
         if not text:
-            await callback.answer("Текст не найден", show_alert=True)
+            await message.answer("Текст не найден. Начните заново с /start")
+            await state.clear()
             return
         
-        # Отправляем сообщение о начале обработки
-        await callback.message.edit_text(MESSAGES["processing"])
+        # Проверяем размер файла
+        photo = message.photo[-1]
+        if photo.file_size > 20 * 1024 * 1024:  # 20MB
+            await message.answer(MESSAGES["file_too_large"])
+            return
         
-        # Генерируем контент
-        generator = ContentGenerator()
-        content = await generator.generate_from_text(text)
+        # Скачиваем файл
+        import os
+        file_info = await message.bot.get_file(photo.file_id)
+        file_path = f"temp/{photo.file_id}.jpg"
         
-        # Форматируем и отправляем результат
-        formatted_content = generator.format_content(content)
+        os.makedirs("temp", exist_ok=True)
+        await message.bot.download_file(file_info.file_path, file_path)
         
-        # Создаем клавиатуру с кнопкой "Сгенерировать еще"
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🔄 Сгенерировать еще", callback_data="generate_more"),
-                InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_to_start")
-            ]
-        ])
-        
-        await callback.message.edit_text(formatted_content, parse_mode="Markdown", reply_markup=keyboard)
-        
-        # Очищаем состояние
-        await state.clear()
-        
-        logger.info(f"Контент сгенерирован из текста для пользователя {callback.from_user.id}")
-        
-    except Exception as e:
-        logger.error(f"Ошибка при генерации контента из текста: {e}")
-        await callback.message.edit_text(MESSAGES["error"])
-
-@router.callback_query(F.data == "add_image_to_text")
-async def add_image_to_text_callback(callback, state: FSMContext):
-    """Обработчик кнопки 'Добавить изображение'"""
-    try:
-        await state.set_state(TextProcessingStates.waiting_for_text)
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_text_menu")
-            ]
-        ])
-        
-        await callback.message.edit_text(
-            "📷 **Отправьте изображение товара**\n\n"
-            "Я объединю фото с вашим описанием и создам полную карточку товара.",
-            reply_markup=keyboard
+        # Используем централизованный сервис
+        await result_service.process_combined_generation(
+            message, state, file_path, text, check_quota=True, generation_type="text"
         )
-        await callback.answer()
         
     except Exception as e:
-        logger.error(f"Ошибка в add_image_to_text_callback: {e}")
-        await callback.answer("Произошла ошибка", show_alert=True)
+        logger.error(f"Ошибка при обработке изображения с текстом: {e}")
+        await message.answer(MESSAGES["error"])
+        await state.clear()
+
 
 @router.callback_query(F.data == "back_to_text_menu")
-async def back_to_text_menu(callback, state: FSMContext):
-    """Обработчик кнопки 'Назад' к меню текста"""
-    try:
-        # Получаем данные из состояния
-        data = await state.get_data()
-        text = data.get("text")
-        
-        if text:
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="✅ Обработать только текст", callback_data="process_text_now"),
-                    InlineKeyboardButton(text="📷 Добавить изображение", callback_data="add_image_to_text")
-                ],
-                [
-                    InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start")
-                ]
-            ])
-            
-            await callback.message.edit_text(
-                MESSAGES["text_received"],
-                reply_markup=keyboard
-            )
-        else:
-            # Если текст потерян, возвращаемся к началу
-            await callback.answer("Текст не найден, возвращаемся к началу", show_alert=True)
-            await state.clear()
-            
-            # Создаем клавиатуру с кнопками
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="📷 Обработать изображение", callback_data="process_image_only"),
-                    InlineKeyboardButton(text="📝 Обработать текст", callback_data="process_text_only")
-                ],
-                [
-                    InlineKeyboardButton(text="📷📝 Обработать оба", callback_data="process_both")
-                ],
-                [
-                    InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")
-                ]
-            ])
-            
-            await callback.message.edit_text(
-                MESSAGES["welcome"],
-                reply_markup=keyboard
-            )
-        
-        await callback.answer()
-        
-    except Exception as e:
-        logger.error(f"Ошибка в back_to_text_menu: {e}")
-        await callback.answer("Произошла ошибка", show_alert=True)
+async def back_to_text_menu(callback: CallbackQuery, state: FSMContext):
+    """Возврат к меню текста"""
+    keyboard = HandlerUtils.create_text_menu_keyboard()
+    await callback.message.edit_text(MESSAGES["text_received"], reply_markup=keyboard)
 
+
+# Альтернативная функция для прямой обработки текста (если нужна для других handler'ов)
 async def process_text_only(message: Message, state: FSMContext):
-    """Обработка только текста (без изображения)"""
-    try:
-        # Отправляем сообщение о начале обработки
-        processing_msg = await message.answer(MESSAGES["processing"])
-        
-        # Генерируем контент
-        generator = ContentGenerator()
-        content = await generator.generate_from_text(message.text)
-        
-        # Форматируем и отправляем результат
-        formatted_content = generator.format_content(content)
-        
-        # Создаем клавиатуру с кнопкой "Сгенерировать еще"
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="🔄 Сгенерировать еще", callback_data="generate_more"),
-                InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_to_start")
-            ]
-        ])
-        
-        await processing_msg.edit_text(formatted_content, parse_mode="Markdown", reply_markup=keyboard)
-        
-        # Очищаем состояние
-        await state.clear()
-        
-        logger.info(f"Контент сгенерирован из текста для пользователя {message.from_user.id}")
-        
-    except Exception as e:
-        logger.error(f"Ошибка при обработке только текста: {e}")
-        await message.answer(MESSAGES["error"])
-        await state.clear() 
+    """Прямая обработка текста без меню"""
+    await result_service.process_text_generation(message, state, message.text)

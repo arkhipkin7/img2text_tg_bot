@@ -1,17 +1,17 @@
 version: '3.8'
 
 services:
-  # Redis для кэширования
   redis:
     image: redis:7-alpine
     container_name: img2text-redis
     restart: unless-stopped
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --save 60 1000
     networks:
       - img2text-network
-
-  # API сервер
   api:
     build:
       context: .
@@ -19,10 +19,10 @@ services:
     container_name: img2text-api
     restart: unless-stopped
     ports:
-      - "8001:8000"
+      - "${API_EXTERNAL_PORT:-8001}:${API_INTERNAL_PORT:-8000}"
     environment:
       - API_HOST=0.0.0.0
-      - API_PORT=8000
+      - API_PORT=${API_INTERNAL_PORT:-8000}
       - API_DEBUG=False
       - LOG_LEVEL=INFO
       - MAX_FILE_SIZE=20971520
@@ -30,7 +30,7 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL}
       - OPENAI_MAX_TOKENS=${OPENAI_MAX_TOKENS}
-      - IMGBB_API_KEY=${IMGBB_API_KEY}
+      - USE_MOCK_OPENAI=false
       - REDIS_URL=redis://redis:6379
     volumes:
       - ./temp:/app/temp
@@ -39,7 +39,6 @@ services:
     networks:
       - img2text-network
 
-  # Telegram бот
   bot:
     build:
       context: .
@@ -48,12 +47,14 @@ services:
     restart: unless-stopped
     environment:
       - BOT_TOKEN=${BOT_TOKEN}
-      - API_BASE_URL=http://api:8000
-      - API_TIMEOUT=60
+      - API_BASE_URL=http://api:${API_INTERNAL_PORT:-8000}
+      - API_TIMEOUT=180
       - LOG_LEVEL=INFO
       - ADMIN_IDS=${ADMIN_IDS}
+      - ADMIN_ID=${ADMIN_ID}
       - MAX_FILE_SIZE=20971520
       - MAX_TEXT_LENGTH=5000
+      - REDIS_URL=redis://redis:6379
     volumes:
       - ./temp:/app/temp
     depends_on:
@@ -66,4 +67,6 @@ networks:
     driver: bridge
 
 volumes:
+  redis_data:
+    driver: local
   temp: 
