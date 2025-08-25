@@ -27,7 +27,8 @@ class YooMoneyPaymentService:
         amount: float, 
         description: str,
         return_url: str,
-        payment_method_type: str = "bank_card"
+        payment_method_type: str = "bank_card",
+        customer_email: str = None
     ) -> Optional[Dict[str, Any]]:
         """
         Создание платежа
@@ -58,11 +59,35 @@ class YooMoneyPaymentService:
             "description": description,
             "payment_method_data": {
                 "type": payment_method_type
+            },
+            "receipt": {
+                "customer": {
+                    "email": customer_email or "customer@example.com"
+                },
+                "items": [
+                    {
+                        "description": description,
+                        "amount": {
+                            "value": f"{amount:.2f}",
+                            "currency": "RUB"
+                        },
+                        "vat_code": 1,  # НДС 20% для продакшн
+                        "quantity": "1",
+                        "payment_subject": "service",  # Тип товара/услуги
+                        "payment_mode": "full_prepayment"  # Способ расчета
+                    }
+                ]
             }
         }
         
+        # Создаем Basic Auth заголовок
+        import base64
+        auth_string = f"{self.shop_id}:{self.secret_key}"
+        auth_bytes = auth_string.encode('ascii')
+        auth_b64 = base64.b64encode(auth_bytes).decode('ascii')
+        
         headers = {
-            "Authorization": f"Basic {self.secret_key}",
+            "Authorization": f"Basic {auth_b64}",
             "Content-Type": "application/json",
             "Idempotence-Key": str(uuid.uuid4())
         }
@@ -101,8 +126,14 @@ class YooMoneyPaymentService:
             logger.error("ЮMoney не настроен")
             return None
         
+        # Создаем Basic Auth заголовок
+        import base64
+        auth_string = f"{self.shop_id}:{self.secret_key}"
+        auth_bytes = auth_string.encode('ascii')
+        auth_b64 = base64.b64encode(auth_bytes).decode('ascii')
+        
         headers = {
-            "Authorization": f"Basic {self.secret_key}",
+            "Authorization": f"Basic {auth_b64}",
             "Content-Type": "application/json"
         }
         

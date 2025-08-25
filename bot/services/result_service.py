@@ -41,7 +41,7 @@ class ResultService:
         if not await self.subs.can_consume(user_id):
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="💳 Тарифы", callback_data="open_pricing")],
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start")],
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start_from_result")],
             ])
             await callback.message.edit_text("Недостаточно запросов. Пополните баланс.", reply_markup=keyboard)
             return False
@@ -72,7 +72,7 @@ class ResultService:
         return await callback.message.answer(MESSAGES["processing"])
     
     async def _delete_processing_message(self, msg: Message) -> None:
-        """Удаляет сообщение о обработке"""
+        """Удаляет сообщение о обработке после завершения генерации"""
         try:
             await msg.delete()
         except:
@@ -220,19 +220,22 @@ class ResultService:
             if not self._is_admin(user_id) and not await self.subs.can_consume(user_id):
                 keyboard = InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="💳 Тарифы", callback_data="open_pricing")],
-                    [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start")],
+                    [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start_from_result")],
                 ])
                 await message.answer("Недостаточно запросов. Пополните баланс.", reply_markup=keyboard)
                 return
         
         try:
             # Отправляем сообщение о начале обработки
-            await message.answer(MESSAGES["processing"])
+            processing_msg = await message.answer(MESSAGES["processing"])
             
             # Генерируем контент
             if check_quota:
                 await self._consume_quota(user_id)
             content = await self.generator.generate_from_both(image_path, text)
+            
+            # Убираем кнопки с сообщения о загрузке для сохранения истории
+            await self._delete_processing_message(processing_msg)
             
             # Отправляем результат
             formatted_content = self.generator.format_content(content)

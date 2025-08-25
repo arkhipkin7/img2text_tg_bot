@@ -9,7 +9,8 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
-    command: redis-server --appendonly yes --save 60 1000
+      - ./backups:/backups
+    command: redis-server --appendonly yes --save 60 1000 --dir /data
     networks:
       - img2text-network
   api:
@@ -55,6 +56,9 @@ services:
       - MAX_FILE_SIZE=20971520
       - MAX_TEXT_LENGTH=5000
       - REDIS_URL=redis://redis:6379
+      - YOOMONEY_SHOP_ID=${YOOMONEY_SHOP_ID}
+      - YOOMONEY_SECRET_KEY=${YOOMONEY_SECRET_KEY}
+      - YOOMONEY_RETURN_URL=${YOOMONEY_RETURN_URL:-https://t.me/img2txt_new_bot}
     volumes:
       - ./temp:/app/temp
     depends_on:

@@ -71,7 +71,7 @@ async def handle_image(message: Message, state: FSMContext):
         await result_service._consume_quota(user_id)
         content = await result_service.generator.generate_from_image(file_path)
         
-        # Удаляем сообщение о загрузке
+        # Удаляем сообщение о загрузке после завершения генерации
         try:
             await processing_msg.delete()
         except:
@@ -159,8 +159,15 @@ async def handle_text_with_image(message: Message, state: FSMContext):
 @router.callback_query(F.data == "back_to_image_menu")
 async def back_to_image_menu(callback: CallbackQuery, state: FSMContext):
     """Возврат к меню изображения"""
+    # Убираем кнопки с текущего сообщения для сохранения истории
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except:
+        pass  # Игнорируем ошибки
+    
+    # Отправляем новое меню, не редактируя предыдущее сообщение
     keyboard = HandlerUtils.create_image_menu_keyboard()
-    await callback.message.edit_text(MESSAGES["image_received"], reply_markup=keyboard)
+    await callback.message.answer(MESSAGES["image_received"], reply_markup=keyboard)
 
 
 # Обработчики для несовместимых форматов и больших файлов

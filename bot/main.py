@@ -7,6 +7,7 @@ from aiogram.types import BotCommand
 
 from config import BOT_TOKEN, ADMIN_ID
 from handlers import start, process_image, process_text, process_both, admin, subscriptions
+from middleware.rate_limiting import RateLimitMiddleware
 from shared.logging_config import setup_logging
 from shared.utils import FileUtils
 
@@ -20,8 +21,13 @@ async def main():
         bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.MARKDOWN))
         dp = Dispatcher(storage=MemoryStorage())
         
+        # Добавляем rate limiting middleware
+        dp.message.middleware(RateLimitMiddleware())
+        dp.callback_query.middleware(RateLimitMiddleware())
+        
         await bot.set_my_commands([
             BotCommand(command="start", description="🚀 Запустить бота"),
+            BotCommand(command="menu", description="🏠 Главное меню"),
             BotCommand(command="help", description="ℹ️ Как пользоваться ботом"),
             BotCommand(command="image_generate", description="📷 Создать описание по фото"),
             BotCommand(command="text_generate", description="📝 Дополнить текст SEO-ключами"),
@@ -38,12 +44,13 @@ async def main():
         dp.include_router(admin.router)
         
         @dp.errors()
-        async def errors_handler(update, exception):
-            logger.error(f"Ошибка при обработке обновления: {exception}")
+        async def errors_handler(event):
+            logger.error(f"Ошибка при обработке обновления: {event.exception}")
             try:
                 if ADMIN_ID:
                     # Получаем информацию о пользователе из обновления
                     user_info = "неизвестен"
+                    update = event.update
                     if hasattr(update, 'from_user') and update.from_user:
                         user_info = f"ID: {update.from_user.id}"
                     elif hasattr(update, 'message') and update.message and update.message.from_user:
@@ -51,7 +58,7 @@ async def main():
                     elif hasattr(update, 'callback_query') and update.callback_query and update.callback_query.from_user:
                         user_info = f"ID: {update.callback_query.from_user.id}"
                     
-                    error_msg = f"⚠️ Ошибка в боте\nПользователь: {user_info}\nОшибка: {str(exception)[:400]}"
+                    error_msg = f"⚠️ Ошибка в боте\nПользователь: {user_info}\nОшибка: {str(event.exception)[:400]}"
                     await bot.send_message(ADMIN_ID, error_msg)
             except Exception as notify_error:
                 logger.error(f"Не удалось отправить уведомление об ошибке: {notify_error}")

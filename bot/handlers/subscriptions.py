@@ -4,7 +4,8 @@
 import logging
 from datetime import datetime, timedelta
 from aiogram import Router, F
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, Message
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 
 from config import MESSAGES, ADMIN_ID, ADMIN_IDS
@@ -20,6 +21,32 @@ router = Router()
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
 subs = SubscriptionService(REDIS_URL)
 yoomoney = YooMoneyPaymentService()
+
+
+@router.message(Command("menu"))
+async def cmd_menu_from_subscriptions(message: Message):
+    """Обработчик команды /menu из раздела подписок - возврат в главное меню"""
+    logger.info(f"Получена команда /menu от пользователя {message.from_user.id} из раздела подписок")
+    
+    from bot.utils.handlers_common import HandlerUtils
+    from bot.utils.quota_utils import quota_utils
+    
+    user_id = message.from_user.id
+    
+    # Получаем статус квоты
+    quota_status = await quota_utils.get_quota_indicator(user_id)
+    quota_detailed = await quota_utils.get_quota_status_text(user_id)
+    
+    # Показываем демо для новых пользователей
+    remaining = await quota_utils.subs.get_remaining(user_id)
+    is_new_user = remaining >= 3  # Полная квота = новый пользователь
+    
+    message_text = MESSAGES["welcome"].format(
+        quota_status=f"{quota_status}\n{quota_detailed}"
+    )
+    
+    keyboard = HandlerUtils.create_main_menu_keyboard(show_demo=is_new_user)
+    await message.answer(message_text, reply_markup=keyboard, parse_mode="Markdown")
 
 @router.callback_query(F.data == "subscriptions")
 async def subscriptions_menu(callback: CallbackQuery):
@@ -64,7 +91,7 @@ async def subscriptions_menu(callback: CallbackQuery):
                 InlineKeyboardButton(text="🏆 Программа лояльности", callback_data="loyalty")
             ],
             [
-                InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start")
+                InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start_from_subscriptions")
             ]
         ])
         
@@ -303,12 +330,16 @@ async def process_payment(callback: CallbackQuery):
             await callback.answer("План не найден", show_alert=True)
             return
         
-        # РЕАЛЬНАЯ ИНТЕГРАЦИЯ (раскомментируйте после настройки ЮMoney):
-        """
+        # РЕАЛЬНАЯ ИНТЕГРАЦИЯ С ЮKASSA
         user_id = callback.from_user.id
         amount = selected_plan.get("price_rub", 0)
         description = f"Оплата тарифа {selected_plan.get('label')}"
-        return_url = os.getenv("YOOMONEY_RETURN_URL", "https://t.me/your_bot")
+        return_url = os.getenv("YOOMONEY_RETURN_URL", "https://t.me/img2txt_new_bot")
+        
+        # Получаем email пользователя (если есть)
+        customer_email = None
+        if hasattr(callback.from_user, 'email') and callback.from_user.email:
+            customer_email = callback.from_user.email
         
         # Создаем платеж
         payment_method_type = yoomoney.get_payment_method_type(payment_method)
@@ -316,22 +347,38 @@ async def process_payment(callback: CallbackQuery):
             amount=amount,
             description=description,
             return_url=return_url,
-            payment_method_type=payment_method_type
+            payment_method_type=payment_method_type,
+            customer_email=customer_email
         )
         
         if payment:
             payment_url = payment['confirmation']['confirmation_url']
+            payment_id = payment['id']
+            
+            # Сохраняем информацию о платеже для последующей проверки
+            await subs.save_payment_info(user_id, payment_id, plan_code, amount)
+            
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="💳 Оплатить", url=payment_url)],
+                [InlineKeyboardButton(text="🔄 Проверить статус", callback_data=f"check_payment_{payment_id}")],
                 [InlineKeyboardButton(text="⬅️ Назад", callback_data=f"select_plan_{plan_code}")]
             ])
             
+            payment_method_names = {
+                "card": "банковской карте",
+                "sbp": "СБП",
+                "yoomoney": "ЮMoney"
+            }
+            method_name = payment_method_names.get(payment_method, "выбранному способу")
+            
             await callback.message.edit_text(
                 f"💳 **Переход к оплате**\n\n"
-                f"💰 Сумма: {amount}₽\n"
-                f"📦 Тариф: {selected_plan.get('label')}\n"
-                f"🔗 Способ: {method_name}\n\n"
-                f"👆 **Нажмите кнопку для перехода к оплате**",
+                f"💰 **Сумма:** {amount}₽\n"
+                f"📦 **Тариф:** {selected_plan.get('label')}\n"
+                f"🔗 **Способ:** {method_name}\n"
+                f"🆔 **ID платежа:** {payment_id}\n\n"
+                f"👆 **Нажмите кнопку 'Оплатить' для перехода к оплате**\n\n"
+                f"💡 После оплаты нажмите 'Проверить статус' для активации подписки",
                 reply_markup=keyboard,
                 parse_mode="Markdown"
             )
@@ -340,43 +387,9 @@ async def process_payment(callback: CallbackQuery):
         else:
             await callback.answer("Ошибка создания платежа", show_alert=True)
             return
-        """
         
-        # ДЕМО: Автоматически активируем подписку для тестирования
-        user_id = callback.from_user.id
-        quota = selected_plan.get("quota", selected_plan.get("count", 0))  # Для разового тарифа используем count
-        
-        # Добавляем запросы пользователю (используем add_one_request с количеством)
-        await subs.add_one_request(user_id, quota)
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="📊 Мой статус", callback_data="my_status"),
-                InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_to_start")
-            ]
-        ])
-        
-        payment_method_names = {
-            "card": "банковской карте",
-            "sbp": "СБП",
-            "yoomoney": "ЮMoney"
-        }
-        
-        method_name = payment_method_names.get(payment_method, "выбранному способу")
-        
-        await callback.message.edit_text(
-            f"✅ **Платеж успешно обработан!**\n\n"
-            f"💳 **Способ оплаты:** {method_name}\n"
-            f"📦 **Тариф:** {selected_plan.get('label')}\n"
-            f"🔄 **Добавлено запросов:** {quota}\n"
-            f"📅 **Дата активации:** {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
-            f"🎉 **Спасибо за покупку!**\n"
-            f"Теперь вы можете пользоваться всеми функциями бота.\n\n"
-            f"💡 Проверьте ваш статус в разделе 'Мой статус'",
-            reply_markup=keyboard,
-            parse_mode="Markdown"
-        )
-        await callback.answer("Платеж прошел успешно! 🎉")
+        # Этот код больше не нужен, так как теперь используется реальная интеграция с ЮKassa
+        await callback.answer("Ошибка: платеж не был создан", show_alert=True)
         
     except Exception as e:
         logger.error(f"Ошибка в process_payment: {e}")
@@ -671,6 +684,129 @@ async def payment_history(callback: CallbackQuery):
     except Exception as e:
         logger.error(f"Ошибка в payment_history: {e}")
         await callback.answer("Произошла ошибка", show_alert=True)
+
+@router.callback_query(F.data.startswith("check_payment_"))
+async def check_payment_status(callback: CallbackQuery):
+    """Проверка статуса платежа"""
+    try:
+        payment_id = callback.data.replace("check_payment_", "")
+        user_id = callback.from_user.id
+        
+        # Проверяем статус платежа через ЮKassa API
+        payment_info = await yoomoney.check_payment_status(payment_id)
+        
+        if not payment_info:
+            await callback.answer("Ошибка проверки платежа", show_alert=True)
+            return
+        
+        payment_status = payment_info.get('status')
+        
+        if payment_status == 'succeeded':
+            # Платеж успешен, активируем подписку
+            payment_data = await subs.get_payment_info(user_id, payment_id)
+            if payment_data:
+                plan_code = payment_data.get('plan_code')
+                amount = payment_data.get('amount')
+                
+                # Находим план
+                if plan_code == "one_time":
+                    selected_plan = PRICING.get("one_time", {})
+                else:
+                    plans = PRICING.get("plans", [])
+                    selected_plan = None
+                    for plan in plans:
+                        if plan.get("code") == plan_code:
+                            selected_plan = plan
+                            break
+                
+                if selected_plan:
+                    quota = selected_plan.get("quota", selected_plan.get("count", 0))
+                    
+                    # Активируем подписку
+                    await subs.add_one_request(user_id, quota)
+                    
+                    # Удаляем информацию о платеже
+                    await subs.delete_payment_info(user_id, payment_id)
+                    
+                    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                        [
+                            InlineKeyboardButton(text="📊 Мой статус", callback_data="my_status"),
+                            InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_to_start_from_subscriptions")
+                        ]
+                    ])
+                    
+                    await callback.message.edit_text(
+                        f"✅ **Платеж успешно обработан!**\n\n"
+                        f"💳 **ID платежа:** {payment_id}\n"
+                        f"📦 **Тариф:** {selected_plan.get('label')}\n"
+                        f"🔄 **Добавлено запросов:** {quota}\n"
+                        f"💰 **Сумма:** {amount}₽\n"
+                        f"📅 **Дата активации:** {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
+                        f"🎉 **Спасибо за покупку!**\n"
+                        f"Теперь вы можете пользоваться всеми функциями бота.\n\n"
+                        f"💡 Проверьте ваш статус в разделе 'Мой статус'",
+                        reply_markup=keyboard,
+                        parse_mode="Markdown"
+                    )
+                    await callback.answer("Платеж прошел успешно! 🎉")
+                    return
+        
+        elif payment_status == 'pending':
+            # Платеж в обработке
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔄 Проверить снова", callback_data=f"check_payment_{payment_id}")],
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="subscriptions")]
+            ])
+            
+            await callback.message.edit_text(
+                f"⏳ **Платеж в обработке**\n\n"
+                f"🆔 **ID платежа:** {payment_id}\n"
+                f"📊 **Статус:** Ожидание оплаты\n\n"
+                f"💡 Если вы уже оплатили, подождите несколько минут и нажмите 'Проверить снова'",
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
+            await callback.answer("Платеж в обработке...")
+        
+        elif payment_status == 'canceled':
+            # Платеж отменен
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💳 Попробовать снова", callback_data="choose_plan")],
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="subscriptions")]
+            ])
+            
+            await callback.message.edit_text(
+                f"❌ **Платеж отменен**\n\n"
+                f"🆔 **ID платежа:** {payment_id}\n"
+                f"📊 **Статус:** Отменен\n\n"
+                f"💡 Вы можете попробовать оплатить снова, выбрав другой способ оплаты",
+                reply_markup=keyboard,
+                parse_mode="Markdown"
+            )
+            await callback.answer("Платеж отменен")
+        
+        else:
+            # Неизвестный статус
+            await callback.answer(f"Неизвестный статус платежа: {payment_status}", show_alert=True)
+        
+    except Exception as e:
+        logger.error(f"Ошибка в check_payment_status: {e}")
+        await callback.answer("Произошла ошибка при проверке платежа", show_alert=True)
+
+@router.callback_query(F.data == "back_to_start_from_subscriptions")
+async def back_to_start_from_subscriptions(callback: CallbackQuery):
+    """Возврат в главное меню из подписок"""
+    # Удаляем сообщение о подписках, чтобы оно не оставалось в истории
+    try:
+        await callback.message.delete()
+    except:
+        pass  # Игнорируем ошибки
+    
+    # Отправляем новое меню
+    from bot.utils.handlers_common import HandlerUtils
+    await HandlerUtils.send_welcome_menu(callback, edit=False)
+    await callback.answer()
+
 
 # Обработчики для дополнительных функций (заглушки для полноты)
 @router.callback_query(F.data.in_([

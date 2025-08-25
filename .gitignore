@@ -167,10 +167,18 @@ debug_response.py
 test_formatting.py
 test_*.py
 .env.backup
-TODO.md
 docs/
 scripts/
 Makefile
+
+# Backup files
+backups/
+*.rdb
+
+# Temporary files
+temp/
+*.tmp
+*.temp
 
 # Optimization files
 OPTIMIZATION_REPORT.md

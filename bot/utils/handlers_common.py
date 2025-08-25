@@ -39,7 +39,14 @@ class HandlerUtils:
     def create_back_keyboard() -> InlineKeyboardMarkup:
         """Создает клавиатуру с кнопкой 'Назад'"""
         return InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start")]
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start_from_instructions")]
+        ])
+    
+    @staticmethod
+    def create_help_back_keyboard() -> InlineKeyboardMarkup:
+        """Создает клавиатуру с кнопкой 'Назад' для помощи"""
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start_from_help")]
         ])
     
     @staticmethod
@@ -51,7 +58,7 @@ class HandlerUtils:
                 InlineKeyboardButton(text="📝 Добавить описание", callback_data="add_text_to_image")
             ],
             [
-                InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start")
+                InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start_from_result")
             ]
         ])
     
@@ -64,7 +71,7 @@ class HandlerUtils:
                 InlineKeyboardButton(text="📷 Добавить изображение", callback_data="add_image_to_text")
             ],
             [
-                InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start")
+                InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start_from_result")
             ]
         ])
     
@@ -98,7 +105,7 @@ class HandlerUtils:
         keyboard = [
             [
                 InlineKeyboardButton(text="🔄 Сгенерировать еще", callback_data=f"generate_more_{generation_type}"),
-                InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_to_start")
+                InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_to_start_from_result")
             ]
         ]
         
@@ -115,7 +122,7 @@ class HandlerUtils:
         """Создает клавиатуру для демо"""
         return InlineKeyboardMarkup(inline_keyboard=[
             [
-                InlineKeyboardButton(text="🚀 Попробовать с моим товаром", callback_data="back_to_start")
+                InlineKeyboardButton(text="🚀 Попробовать с моим товаром", callback_data="back_to_start_from_demo")
             ],
             [
                 InlineKeyboardButton(text="💎 Посмотреть тарифы", callback_data="subscriptions")
@@ -130,7 +137,7 @@ class HandlerUtils:
                 InlineKeyboardButton(text="💎 Купить запросы", callback_data="subscriptions")
             ],
             [
-                InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_to_start")
+                InlineKeyboardButton(text="🏠 Главное меню", callback_data="back_to_start_from_result")
             ]
         ])
     

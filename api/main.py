@@ -12,6 +12,7 @@ from api.models.schemas import GenerateRequest, GenerateResponse, HealthResponse
 from api.services.content_generator import content_generator
 from api.services.image_processor import ImageProcessor
 from api.middleware import LoggingMiddleware
+from api.middleware.rate_limiting import rate_limit_middleware
 from shared.logging_config import setup_logging
 
 setup_logging()
@@ -25,6 +26,7 @@ app = FastAPI(
 )
 
 app.add_middleware(LoggingMiddleware)
+app.middleware("http")(rate_limit_middleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -124,12 +126,30 @@ async def validation_exception_handler(request, exc):
 
 @app.exception_handler(Exception)
 async def general_exception_handler(request, exc):
-    logger.error(f"Необработанное исключение: {exc}")
+    logger.error(f"Необработанное исключение: {exc}", exc_info=True)
+    
+    # Не показываем детали ошибок в продакшн
+    if API_DEBUG:
+        detail = str(exc)
+    else:
+        detail = "Внутренняя ошибка сервера"
+    
     return JSONResponse(
         status_code=500,
         content=ErrorResponse(
             error="Внутренняя ошибка сервера",
-            detail=str(exc)
+            detail=detail
+        ).dict()
+    )
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request, exc):
+    logger.warning(f"HTTP Exception: {exc.status_code} - {exc.detail}")
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=ErrorResponse(
+            error="HTTP Error",
+            detail=exc.detail
         ).dict()
     )
 

@@ -136,4 +136,34 @@ class SubscriptionService:
         key = self._user_key(user_id)
         await self._redis.hincrby(key, "extra_remaining", count)
 
+    async def save_payment_info(self, user_id: int, payment_id: str, plan_code: str, amount: float) -> None:
+        """Сохраняет информацию о платеже для последующей проверки"""
+        key = f"payment:{user_id}:{payment_id}"
+        mapping = {
+            "plan_code": plan_code,
+            "amount": str(amount),
+            "created_at": str(int(time.time()))
+        }
+        await self._redis.hset(key, mapping=mapping)
+        # Устанавливаем TTL на 24 часа
+        await self._redis.expire(key, 86400)
+
+    async def get_payment_info(self, user_id: int, payment_id: str) -> Optional[dict]:
+        """Получает информацию о платеже"""
+        key = f"payment:{user_id}:{payment_id}"
+        data = await self._redis.hgetall(key)
+        if not data:
+            return None
+        
+        return {
+            "plan_code": data.get("plan_code"),
+            "amount": float(data.get("amount", "0")),
+            "created_at": int(data.get("created_at", "0"))
+        }
+
+    async def delete_payment_info(self, user_id: int, payment_id: str) -> None:
+        """Удаляет информацию о платеже"""
+        key = f"payment:{user_id}:{payment_id}"
+        await self._redis.delete(key)
+
 

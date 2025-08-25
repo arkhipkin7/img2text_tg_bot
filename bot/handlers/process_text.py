@@ -55,7 +55,7 @@ async def handle_text(message: Message, state: FSMContext):
         await result_service._consume_quota(user_id)
         content = await result_service.generator.generate_from_text(message.text)
         
-        # Удаляем сообщение о загрузке
+        # Удаляем сообщение о загрузке после завершения генерации
         try:
             await processing_msg.delete()
         except:
@@ -151,8 +151,15 @@ async def handle_image_with_text(message: Message, state: FSMContext):
 @router.callback_query(F.data == "back_to_text_menu")
 async def back_to_text_menu(callback: CallbackQuery, state: FSMContext):
     """Возврат к меню текста"""
+    # Убираем кнопки с текущего сообщения для сохранения истории
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except:
+        pass  # Игнорируем ошибки
+    
+    # Отправляем новое меню, не редактируя предыдущее сообщение
     keyboard = HandlerUtils.create_text_menu_keyboard()
-    await callback.message.edit_text(MESSAGES["text_received"], reply_markup=keyboard)
+    await callback.message.answer(MESSAGES["text_received"], reply_markup=keyboard)
 
 
 # Альтернативная функция для прямой обработки текста (если нужна для других handler'ов)

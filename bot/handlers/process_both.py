@@ -88,7 +88,7 @@ async def handle_image_for_both(message: Message, state: FSMContext):
                 InlineKeyboardButton(text="🚀 Без описания", callback_data="process_image_only_from_both")
             ],
             [
-                InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start")
+                InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_start_from_result")
             ]
         ])
         
@@ -129,7 +129,14 @@ async def continue_with_text(callback: CallbackQuery, state: FSMContext):
     from bot.utils.handlers_common import HandlerUtils
     keyboard = HandlerUtils.create_back_keyboard()
     
-    await callback.message.edit_text(
+    # Удаляем предыдущее сообщение, чтобы оно не оставалось в истории
+    try:
+        await callback.message.delete()
+    except:
+        pass  # Игнорируем ошибки
+    
+    # Отправляем новое сообщение с инструкцией
+    await callback.message.answer(
         "📝 **Отправьте текстовое описание товара**\n\n"
         "Я объединю его с анализом изображения и создам полную карточку товара.",
         reply_markup=keyboard,
@@ -165,4 +172,12 @@ async def process_image_only_from_both(callback: CallbackQuery, state: FSMContex
 @router.callback_query(F.data == "back_to_both_menu") 
 async def back_to_both_menu(callback: CallbackQuery, state: FSMContext):
     """Возврат к главному меню"""
-    await HandlerUtils.send_welcome_menu(callback)
+    # Убираем кнопки с текущего сообщения для сохранения истории
+    try:
+        await callback.message.edit_reply_markup(reply_markup=None)
+    except:
+        pass  # Игнорируем ошибки
+    
+    # Отправляем новое меню, не редактируя предыдущее сообщение
+    from bot.utils.handlers_common import HandlerUtils
+    await HandlerUtils.send_welcome_menu(callback, edit=False)
